@@ -1,0 +1,152 @@
+ifndef::imagesdir[:imagesdir: ../images]
+
+[[section-technical-risks]]
+== Riesgos y Deudas Técnicas
+
+ifdef::arc42help[]
+[role="arc42help"]
+****
+.Contents
+Lista de riesgos y deudas técnicas identificadas, ordenadas por prioridad.
+****
+endif::arc42help[]
+
+=== Riesgos identificados
+
+[cols="1,1,3,2,1", options="header"]
+|===
+|ID |Riesgo |Descripción |Mitigación actual |Prioridad
+
+|R-01
+|Pérdida de estado de partidas activas al reiniciar GameY
+|Las sesiones de juego (`DashMap<username, UserSession>`) viven únicamente en memoria del proceso Rust. Un reinicio del contenedor de GameY elimina todas las partidas en curso. Solo el resultado final se persiste en MongoDB, no el estado intermedio del tablero.
+|Docker Compose con política de reinicio `unless-stopped`; el historial de partidas ya finalizadas es inmune. El usuario puede iniciar nueva partida sin errores tras el reinicio.
+|Alta
+
+|R-02
+|Autorizacion fina incompleta
+|`authMiddleware` ya protege la mayoria de rutas sensibles, pero algunas operaciones siguen confiando en el `username` recibido por body/query y `/users/purchase-xp` no exige token. Un cliente podria intentar operar sobre recursos de otro usuario si no se compara contra `req.user.username`.
+|JWT activo en rutas de usuarios, amigos, juego e historial; queda pendiente aplicar proteccion a compra de XP y validar propietario del recurso en rutas sensibles.
+|Alta
+
+|R-03
+|Incompatibilidad de `package-lock.json` entre sistemas operativos
+|Los desarrolladores en Windows generan `package-lock.json` con rutas absolutas o saltos de línea CRLF que rompen `npm ci` en los runners Linux de GitHub Actions, bloqueando el pipeline de CI.
+|Resuelto mediante regeneración del lock en Linux y `.gitattributes` con `eol=lf`. El CI verifica que el lock no cambia tras `npm ci`.
+|Media (resuelta)
+
+|R-04
+|Curva de aprendizaje en Rust
+|El equipo tiene experiencia limitada en Rust, en particular en programación asíncrona con Tokio, manejo del ownership en estructuras compartidas (`Arc<Mutex<T>>`) y el sistema de tipos de Actix/Axum.
+|Code review cruzado obligatorio para código Rust. Uso de `cargo clippy` y `cargo fmt` en CI. Tests de integración con `tokio::test` como red de seguridad ante bugs de concurrencia.
+|Media
+
+|R-05
+|Sesión de invitado sin aislamiento de estado en GameY
+|Los usuarios invitados juegan con el username vacío o genérico. Si múltiples invitados coinciden en el mismo username interno, podrían compartir estado de partida en el `DashMap` de GameY.
+|El modo invitado no llama a endpoints que requieran username en GameY (solo `/reset` y `/move` con username propio). Revisión pendiente de la unicidad del identificador para sesiones de invitado.
+|Media
+
+|R-06
+|Disponibilidad del entorno cloud único
+|El despliegue de producción depende de un único servidor sin redundancia. Una caída del servidor implica indisponibilidad total del sistema para todos los usuarios.
+|Health checks configurados en Docker Compose. Alertas en Grafana para métricas críticas. Procedimiento de recuperación documentado en el README.
+|Media
+
+|R-07
+|Cobertura de tests insuficiente en flujos E2E
+|Los tests unitarios y de integración cubren componentes aislados, pero los flujos completos (login → juego → victoria → historial) no están cubiertos por tests automáticos de extremo a extremo. Los archivos de Cucumber/Playwright están configurados pero la suite E2E no tiene cobertura completa.
+|Cucumber + Playwright instalados y configurados en `package.json`. Tests E2E prioritarios identificados para el próximo sprint (flujo login, flujo partida completa).
+|Media
+
+|R-08
+|`openapi.yaml` del Users Service desactualizada
+|El archivo `openapi.yaml` solo documenta `/createuser` y `/loginuser` (con el nombre incorrecto). Los 16 endpoints restantes no tienen documentación OpenAPI, lo que dificulta la integración y la comunicación con stakeholders externos.
+|GameY sí tiene documentación OpenAPI generada automáticamente con `utoipa` y accesible en `/swagger-ui`. La actualización del `openapi.yaml` del Users Service está en el backlog.
+|Baja
+|===
+
+=== Deudas Técnicas
+
+[cols="1,1,3,2,1", options="header"]
+|===
+|ID |Deuda |Descripción |Impacto si no se resuelve |Prioridad
+
+|DT-01
+|Autorizacion por propietario pendiente
+|El middleware JWT esta aplicado en la mayoria de rutas sensibles, pero conviene usar `req.user.username` como fuente de verdad y no aceptar ciegamente usernames enviados por el cliente. `/users/purchase-xp` tambien debe exigir token y validar la compra en servidor.
+|Riesgo de operaciones sobre otra cuenta o acreditacion de XP sin una verificacion suficientemente fuerte.
+|Alta
+
+|DT-02
+|Estado de partida activa no persistido
+|GameY mantiene el tablero en memoria (`DashMap`). Si el proceso Rust se reinicia (actualización, crash, OOM), todas las partidas en curso se pierden sin posibilidad de recuperación. Solo el resultado final llega a MongoDB cuando la partida termina.
+|Mala experiencia de usuario ante reinicios del contenedor. Imposibilita funcionalidades futuras como "reanudar partida" o "partidas en pausa". Requiere añadir persistencia del estado del tablero en MongoDB.
+|Alta
+
+|DT-03
+|Tests E2E con cobertura incompleta
+|La infraestructura de tests E2E con Cucumber y Playwright está instalada y configurada, pero los escenarios implementados no cubren los flujos críticos: partida completa contra bot, expiración del temporizador, cambio de idioma durante partida, flujo de amigos completo.
+|Regresiones en flujos de usuario pueden no detectarse hasta producción. Aumenta el riesgo de introducir bugs en integraciones al añadir nuevas funcionalidades.
+|Alta
+
+|DT-04
+|CORS abierto (`Access-Control-Allow-Origin: *`) en el Users Service
+|El Users Service permite peticiones desde cualquier origen. En producción esto expone la API a llamadas cross-origin no autorizadas desde dominios externos.
+|Riesgo de abuso de la API pública. Debe restringirse al dominio de producción y al localhost para desarrollo. Cambio de bajo impacto técnico pero necesario antes de un despliegue en producción pública.
+|Media
+
+|DT-05
+|`openapi.yaml` del Users Service desactualizada
+|Solo documenta 2 de los 18 endpoints reales, con nombres incorrectos. El endpoint documentado como `/loginuser` se llama en realidad `/login`.
+|Dificulta la incorporación de nuevos desarrolladores y la comunicación con stakeholders. GameY tiene Swagger automático con `utoipa`; el Users Service debería tener el mismo nivel de documentación.
+|Media
+
+|DT-06
+|Glosario de la documentación arc42 sin completar (sección 12)
+|Los términos específicos del dominio del Juego Y (YEN, YGN, baricéntricas, lados del triángulo, Union-Find, FriendCode, XP...) no están definidos en la documentación. Dificulta la comprensión del proyecto por parte de evaluadores externos o nuevos colaboradores.
+|Barrera de entrada para nuevos contribuidores. Riesgo en la evaluación académica si los evaluadores no conocen la terminología del juego.
+|Media
+
+|DT-07
+|Prometheus y Grafana no desplegados en el entorno cloud de producción
+|El stack de observabilidad está configurado correctamente en Docker Compose local pero no se despliega junto al resto de servicios en producción. No hay alertas activas sobre el sistema en producción.
+|Sin visibilidad de errores, latencias ni carga del sistema en producción. Los escenarios de calidad de rendimiento (R-01, R-03) no tienen evidencia empírica.
+|Media
+
+|DT-08
+|Cálculo de puntuación duplicado entre Node y Rust
+|`calculateVictoryScore` en `users-service.js` implementa un fallback del cálculo de puntos (100 × multiplicador × size/6). GameY también devuelve un `score`. Si los dos cálculos divergen, el comportamiento depende del orden de condiciones en `/move`.
+|Inconsistencia potencial en los XP otorgados si se actualizan las reglas de puntuación solo en uno de los dos lugares. Requiere unificar el cálculo en un solo servicio (preferiblemente GameY, que tiene el contexto de la partida).
+|Baja
+|===
+
+=== Plan de acción
+
+[cols="1,3,1", options="header"]
+|===
+|Horizonte |Elementos a abordar |Criterio de hecho
+
+|*Sprint inmediato*
+|DT-01 (cerrar autorizacion por propietario y proteger compra de XP), DT-03 (implementar tests E2E para flujo login y partida completa)
+|Todas las rutas de escritura usan JWT y validan propietario; al menos 3 escenarios E2E en verde en CI
+
+|*Próximos sprints*
+|DT-02 (persistencia de estado activo en MongoDB), DT-04 (restringir CORS al dominio de producción), DT-07 (desplegar Prometheus/Grafana en producción)
+|El reinicio de GameY no pierde partidas en curso; CORS configurado por entorno; dashboards activos en producción
+
+|*Backlog*
+|DT-05 (actualizar `openapi.yaml`), DT-06 (completar glosario arc42), DT-08 (unificar cálculo de puntuación en GameY)
+|Documentación completa y revisada; un único punto de verdad para el cálculo de XP
+|===
+
+=== Actualizacion de riesgos segun el codigo actual
+
+La documentacion anterior conserva algunas deudas historicas que ya han cambiado en el codigo. En el estado actual, `authMiddleware` si se aplica en la mayoria de rutas sensibles (`/users/*`, `/friends*`, `/move`, `/reset`, `/surrender`, `/history`, `/difficulties`). Por tanto, DT-01 deja de ser una deuda abierta en esos endpoints. Quedan como puntos a revisar:
+
+* `/users/purchase-xp` sigue sin `authMiddleware`; conviene protegerlo y validar la compra en servidor antes de acreditar XP.
+* El middleware comprueba que el JWT sea valido, pero algunas rutas siguen confiando en `username` recibido en body/query. Como mejora, deberian comparar `req.user.username` con el usuario objetivo para evitar operaciones en nombre de otra cuenta.
+* El modo PvP mantiene estado activo en memoria en `users` y `gamey`. Si cualquiera de los dos procesos se reinicia, la partida en curso se pierde aunque el historial de partidas terminadas permanezca.
+* En `gamey`, `create_default_registry()` registra todos los bots, pero `run_bot_server()` construye actualmente el registro solo con `RandomBot` y `ProBot`. Si se quiere que Easy/Medium/Hard ofrezcan todos los bots descritos, conviene usar el registro por defecto en el arranque del servidor.
+
+Con esto, el riesgo principal ya no es "rutas sin JWT" de forma general, sino la autorizacion fina por propietario del recurso y la proteccion completa de operaciones economicas o de XP.

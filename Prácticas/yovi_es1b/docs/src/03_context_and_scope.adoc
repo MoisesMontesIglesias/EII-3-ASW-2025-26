@@ -1,0 +1,93 @@
+[[section-context-and-scope]]
+== Contexto y Alcance
+
+=== Contexto de Negocio
+
+El sistema **YOVI** es una plataforma de juegos basada en el "Juego Y", diseñada como un ecosistema de microservicios para la competición entre humanos y agentes automáticos (bots) en el ámbito académico de la UniOvi.
+
+[plantuml, business-context, png]
+----
+@startuml
+left to right direction
+skinparam actorStyle awesome
+
+actor "Usuario" as user
+actor "Bots Externos" as bots
+actor "Administrador" as admin
+component "Sistema YOVI" as yovi
+database "MongoDB Atlas" as atlas
+
+user -- yovi : Jugar / Registro
+bots -- yovi : Protocolo YEN
+admin -- yovi : Gestión
+yovi -- atlas : Persistencia
+@enduml
+----
+
+
+|===
+|Socio de comunicación |Entradas |Salidas
+
+|**Usuario (Jugador)**
+|Registro de cuenta, selección de niveles de dificultad y ejecución de movimientos en el tablero.
+|Visualización del estado del juego, confirmación de registro y feedback de movimientos.
+
+|**Bots / Sistemas Externos**
+|Peticiones HTTP enviando el estado del tablero en notación **YEN** o **YGN**.
+|Respuesta con el próximo movimiento calculado por el motor de alto rendimiento en Rust.
+
+|**MongoDB Atlas**
+|Consultas de lectura y comandos de escritura (usuarios, partidas, amigos).
+|Datos persistidos, histórico de juegos y perfiles actualizados.
+
+|**Administrador / Alumno**
+|Despliegue mediante Docker Compose y ejecución de suites de pruebas (`npm test`, `cargo test`).
+|Logs de contenedores, métricas de rendimiento del motor y documentación técnica generada.
+|===
+
+=== Contexto Técnico
+
+La arquitectura de **YOVI** se define por la interoperabilidad de tres componentes principales aislados, comunicados mediante protocolos REST y orquestados por un entorno de contenedores.
+
+[plantuml, business-context, png]
+----
+@startuml
+node "Navegador" as browser
+node "Servidor YOVI (Docker)" as docker
+node "MongoDB Atlas (Cloud)" as atlas
+
+browser -- docker : HTTPS / REST (443)
+docker -- atlas : TLS / TCP (27017)
+@enduml
+----
+
+|===
+|Interfaz |Canal / Protocolo |Descripción
+
+|**Webapp (Frontend)**
+|HTTP / React & Vite (Puerto 80/5173)
+|SPA en TypeScript que orquestra la experiencia del usuario y consume las APIs de lógica y usuarios.
+
+|**Users Service**
+|REST / Node.js & Express (Puerto 3000)
+|Servicio encargado de la gestión y persistencia de las cuentas de usuario.
+
+|**Gamey Engine**
+|REST / Rust & Cargo (Puerto 4000)
+|Servicio de lógica de juego encargado de validar movimientos, estados de victoria y ejecución de bots.
+
+|**MongoDB Atlas**
+|Protocolo MongoDB (TLS)
+|Clúster gestionado en la nube que aloja bases de datos independientes para cada servicio.
+
+|**Infraestructura**
+|Docker / Docker Compose
+|Red virtual que aísla los servicios y gestiona el ciclo de vida de los contenedores del sistema.
+|===
+
+**Mapeo de Entradas/Salidas:**
+
+* **Gestión de Usuarios:** El flujo de registro y autenticación es responsabilidad exclusiva del servicio **Users**, que recibe datos de formulario y devuelve confirmaciones de estado.
+* **Lógica de Juego:** El **Webapp** delega la inteligencia de tablero, validación de movimientos y cálculo de bots al servicio **Gamey**.
+* **Protocolo de Comunicación:** Todos los componentes utilizan **JSON** para el intercambio de mensajes, empleando las notaciones **YEN** y **YGN** para representar el estado del tablero.
+* **Orquestación de Red:** La comunicación entre servicios se realiza internamente a través de la red de **Docker**, exponiendo los puertos necesarios para la interacción con el usuario.

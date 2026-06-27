@@ -1,0 +1,180 @@
+ifndef::imagesdir[:imagesdir: ../images]
+
+[[section-glossary]]
+== Glosario
+
+ifdef::arc42help[]
+[role="arc42help"]
+****
+.Contents
+The most important domain and technical terms that your stakeholders use when discussing the system.
+
+You can also see the glossary as source for translations if you work in multi-language teams.
+
+.Motivation
+You should clearly define your terms, so that all stakeholders
+
+* have an identical understanding of these terms
+* do not use synonyms and homonyms
+
+
+.Form
+
+A table with columns <Term> and <Definition>.
+
+Potentially more columns in case you need translations.
+
+
+.Further Information
+
+See https://docs.arc42.org/section-12/[Glossary] in the arc42 documentation.
+
+****
+endif::arc42help[]
+
+[cols="e,2e" options="header"]
+|===
+|Término |Definición
+
+|*Axum*
+|Framework web asíncrono para Rust, basado en Tokio y Tower. Se usa en GameY para exponer la API REST del motor de juego. Permite definir rutas de forma declarativa y compartir estado entre handlers mediante el patrón `State<AppState>`.
+
+|*BFF (Backend For Frontend)*
+|Patrón arquitectónico en el que un servicio de backend actúa como intermediario dedicado para un frontend específico. En YoVi, el Users Service actúa como BFF: la Webapp solo conoce su API, y el Users Service se encarga de coordinar las llamadas a GameY internamente.
+
+|*bcryptjs*
+|Librería de Node.js para hash de contraseñas usando el algoritmo bcrypt. Usada en el Users Service con `saltRounds=10`. La función `bcrypt.hash` genera un salt aleatorio e incorporado en el hash resultante; `bcrypt.compare` verifica sin necesidad de conocer el salt por separado.
+
+|*Coordenadas baricentricas*
+|Sistema de coordenadas `(x, y, z)` donde `x + y + z = N-1` (siendo N el tamaño del tablero). Usado en GameY para identificar celdas del tablero triangular. `x=0` indica que la celda toca el lado A, `y=0` el lado B, `z=0` el lado C. La conversión entre índice lineal y coordenadas baricentricas usa la fórmula de números triangulares.
+
+|*DashMap*
+|Implementación de `HashMap` concurrente para Rust (crate `dashmap`). En GameY se usa para el mapa `sessions: DashMap<String, Arc<UserSession>>`. A diferencia de `Mutex<HashMap>`, permite lecturas y escrituras concurrentes en distintas entradas sin bloquear todo el mapa.
+
+|*Database-per-Service*
+|Patrón de microservicios en el que cada servicio es propietario de su propia base de datos o esquema y los demás servicios no pueden acceder directamente a ella. En YoVi: el Users Service gestiona `users` y `friendships`; GameY gestiona `partidas` y estadísticas. Ninguno accede a las colecciones del otro.
+
+|*Docker Compose*
+|Herramienta de orquestación de contenedores para entornos de desarrollo y despliegue simple. YoVi usa Docker Compose para levantar los seis servicios (webapp, users, gamey, mongo, prometheus, grafana) con un único `docker-compose up --build`. Garantiza reproducibilidad del entorno.
+
+|*express-prom-bundle*
+|Middleware de Express que inyecta automáticamente métricas HTTP (latencia, método, código de estado, ruta) en formato Prometheus. Usado en el Users Service. Las métricas quedan disponibles en el endpoint `/metrics` sin instrumentación manual en el código de negocio.
+
+|*FriendCode*
+|Identificador único de 6 caracteres generado con `nanoid` para cada usuario al registrarse. Usa un alfabeto sin caracteres ambiguos (sin O, 0, I, l). Permite buscar usuarios de forma exacta con el prefijo `#` (por ejemplo: `#K8S2NW`). Alternativa al nombre de usuario para solicitudes de amistad.
+
+|*GameY*
+|Motor de juego del Juego Y implementado en Rust. Nombre del servicio y también del binario ejecutable. En modo `--mode server` expone la API HTTP en el puerto 4000. En modo CLI permite jugar en terminal.
+
+|*GameStatus*
+|Enum de Rust con dos variantes: `Ongoing { next_player: PlayerId }` y `Finished { winner: PlayerId }`. Representa el estado actual de una partida en `GameY`. El campo `winner` identifica al jugador que ha conectado los tres lados del tablero.
+
+|*Grafana*
+|Plataforma de visualización de métricas y logs. En YoVi consume las métricas de Prometheus y las muestra en dashboards de disponibilidad y latencia del Users Service. Se provisiona automáticamente desde ficheros YAML en `monitoring/grafana/provisioning/`.
+
+|*JWT (JSON Web Token)*
+|Estándar para transmitir información entre partes de forma compacta y verificable mediante firma digital. En YoVi, el Users Service firma un token con `JWT_SECRET` al hacer login (expiración 24h). La Webapp lo guarda en `sessionStorage` y lo envía en la cabecera `Authorization: Bearer <token>` en cada petición posterior.
+
+|*Lottie*
+|Formato de animación vectorial basado en JSON, exportado desde Adobe After Effects. En la Webapp se usa `lottie-react` para los botones animados del juego (historial, logout, reinicio, etc.). En los tests se mockea con un `<div>` simple para evitar dependencias de canvas.
+
+|*MPA (Multi-Page Application)*
+|Arquitectura web donde cada "página" es un documento HTML independiente con su propio bundle JavaScript. YoVi tiene 4 páginas: `index.html`, `login.html`, `register.html` y `game.html`. Nginx sirve cada fichero directamente. Contrasta con SPA (Single-Page Application) donde hay una sola entrada HTML.
+
+|*Mongoose*
+|ODM (Object Document Mapper) para MongoDB en Node.js. Proporciona definición de esquemas con tipos, validaciones y métodos de consulta. Usado en el Users Service para los modelos `User` y `Friendship`. La opción `mongoose.models.X || mongoose.model(...)` evita redefinir modelos en los tests.
+
+|*nanoid*
+|Librería de generación de IDs únicos para JavaScript. Usada en el Users Service con `customAlphabet` para generar FriendCodes de 6 caracteres. El alfabeto personalizado excluye caracteres visualmente ambiguos.
+
+|*Nginx*
+|Servidor web y proxy inverso. En YoVi actúa como punto de entrada para la Webapp: sirve los ficheros estáticos construidos por Vite, redirige HTTP a HTTPS y gestiona el SSL con certificados generados por mkcert.
+
+|*PayPal SDK (`@paypal/react-paypal-js`)*
+|SDK oficial de PayPal para React. Usado en el componente `PayPalStore` para la tienda de XP. El flujo es: `PayPalScriptProvider` carga el SDK → `PayPalButtons` pinta el botón → `createOrder` define la compra (1€) → `onApprove` captura el pago → se llama a `/users/purchase-xp` para acreditar 1000 XP. Funciona con cuentas sandbox (sin transacciones reales).
+
+|*PlayerId*
+|Struct de Rust que encapsula el ID numérico de un jugador (0 = humano/azul, 1 = bot/rojo). Usado en `GameY`, `Movement`, `GameStatus` y los bots. La función `other_player(player)` devuelve el jugador contrario alternando entre 0 y 1.
+
+|*Prometheus*
+|Sistema de monitorización y alerta open-source. Recoge métricas en formato de series temporales mediante scraping HTTP periódico. En YoVi hace scraping al Users Service cada 5 segundos. Las métricas se configuran en `monitoring/prometheus/prometheus.yml`.
+
+|*ProBot / AttackerBot*
+|Los dos bots de dificultad Hard en GameY. Ambos calculan la distancia BFS de cada celda vacía a los tres lados del tablero. `AttackerBot` usa un potencial basado en la suma de cuadrados de distancias y simula movimientos ganadores inmediatos. `ProBot` usa un potencial de cuarta potencia y penaliza menos al oponente.
+
+|*React Testing Library*
+|Librería de testing para componentes React que fomenta tests centrados en el comportamiento observable desde el usuario (lo que ve en pantalla) en lugar de los detalles de implementación. Usada con Vitest en la Webapp.
+
+|*Rustls*
+|Implementación de TLS en Rust puro (sin dependencias de OpenSSL). Usada en GameY mediante `axum-server` para servir la API con HTTPS. Los certificados se cargan desde las variables de entorno `CERT_PATH` y `KEY_PATH`.
+
+|*sessionStorage*
+|API de almacenamiento del navegador cuyo contenido se elimina al cerrar el tab. En YoVi se usa para guardar el JWT y el username de la sesión activa. Contrasta con `localStorage`, que persiste entre sesiones. Se elige `sessionStorage` para el token por razones de seguridad.
+
+|*SonarCloud*
+|Plataforma de análisis estático de código en la nube. En YoVi analiza la cobertura de tests, bugs, code smells y hotspots de seguridad en cada push al repositorio. La configuración se define en `sonar-project.properties`. El Quality Gate debe estar en estado "Passed" para considerar válida una entrega.
+
+|*Supertest*
+|Librería de Node.js para testing de APIs HTTP. En los tests del Users Service se usa con Vitest para hacer peticiones HTTP reales al servidor Express sin necesidad de levantar un puerto de red. Compatible con el objeto `app` exportado por `users-service.js`.
+
+|*Tokio*
+|Runtime asíncrono para Rust. Proporciona el executor de `async/await`, el `Mutex` asíncrono y `tokio::spawn` para tareas concurrentes. En GameY se usa `tokio::spawn` para persistir partidas en MongoDB de forma no bloqueante tras detectar un ganador.
+
+|*totalScore*
+|Campo numérico en el modelo `User` de MongoDB que acumula los puntos de experiencia (XP) del usuario. Se incrementa atómicamente con `$inc` en MongoDB cuando el humano gana una partida (desde el Users Service) o cuando compra XP con PayPal (endpoint `/users/purchase-xp`).
+
+|*Union-Find (Disjoint Set Union)*
+|Estructura de datos para gestionar conjuntos disjuntos con operaciones `find` (raíz con path compression) y `union` (fusión de conjuntos). En GameY se usa para detectar la condición de victoria: al colocar una ficha, se fusiona su conjunto con los vecinos del mismo jugador haciendo OR de las máscaras de región. Si la máscara resultante es `0b111`, el jugador ha conectado los tres lados y ha ganado.
+
+|*UserSession*
+|Struct de Rust en GameY que agrupa el estado privado de cada jugador: `Mutex<GameY>` (el tablero), `Mutex<BotDifficulty>` (dificultad actual) y `Mutex<String>` (nombre del bot activo). Se almacena en el `DashMap` de sesiones indexado por username.
+
+|*Vite*
+|Herramienta de construcción y servidor de desarrollo para aplicaciones web modernas. En YoVi se usa con el plugin `@vitejs/plugin-react` para compilar el TypeScript y JSX. La configuración MPA define 4 entradas (`main`, `login`, `register`, `game`) en `vite.config.ts`.
+
+|*Vitest*
+|Framework de testing unitario compatible con Vite. Usado tanto en la Webapp (con `jsdom` como entorno) como en el Users Service. Incluye `vi.useFakeTimers()` para controlar el tiempo en tests del temporizador y `vi.stubGlobal('fetch', mockFetch)` para los tests de proxy a Rust.
+
+|*XP (Experience Points)*
+|Sistema de puntuación de YoVi. Se obtiene ganando partidas (cantidad calculada en función de la dificultad y el tamaño del tablero: 100 × multiplicador × size/6) o comprando paquetes en la tienda PayPal (1000 XP por 1€). Se acumula en `totalScore` en MongoDB y se muestra en la barra de navegación de la pantalla de juego.
+
+|*YEN (Y Exchange Notation)*
+|Formato JSON para serializar el estado del tablero del Juego Y. Inspirado en la notación FEN del ajedrez. Campos: `size` (tamaño del lado), `turn` (0 o 1), `players` (símbolos `['B', 'R']`), `layout` (filas separadas por `/`, celdas como `B`, `R` o `.`). Ejemplo: `{"size":3,"turn":1,"players":["B","R"],"layout":"B/BR/.R."}`.
+
+|*YBot*
+|Trait de Rust que define la interfaz que deben implementar todos los bots del juego. Métodos obligatorios: `name() -> &str`, `difficulty() -> BotDifficulty`, `choose_move(&GameY) -> Option<Coordinates>`. El trait exige `Send + Sync` para poder almacenar bots en el `YBotRegistry` compartido entre threads.
+
+|*YBotRegistry*
+|Estructura de Rust que gestiona los bots disponibles mediante un `HashMap<String, Arc<dyn YBot>>`. Métodos principales: `with_bot` (registro), `find` (por nombre), `get_random_bot_by_difficulty` (selección aleatoria entre bots del nivel pedido). Almacenado en `AppState` compartido entre todos los handlers HTTP de GameY.
+
+|*YGN (Y Game Notation)*
+|Notación alternativa para representar la secuencia de movimientos de una partida del Juego Y (análoga al PGN del ajedrez). Definida en el módulo `src/notation/` de GameY. Complementa a YEN que describe el estado estático del tablero.
+
+|*Juego Y (Game of Y)*
+|Juego de conexión para dos jugadores inventado por Claude Shannon y John Nash en los años 50. Se juega en un tablero triangular: el jugador azul (humano) y el rojo (bot) se turnan colocando fichas. Gana el primero que conecte los tres lados del triángulo con una cadena continua de sus piezas. A diferencia del Hex, donde hay dos lados por jugador, en el Juego Y todos los jugadores compiten por conectar los mismos tres lados, lo que hace imposible el empate.
+
+|*mkcert*
+|Herramienta para generar certificados SSL de desarrollo firmados por una CA local de confianza. En YoVi se usa para generar `cert.pem` y `key.pem` que se montan en los contenedores de Webapp (Nginx) y GameY (Rustls). Permite trabajar con HTTPS en entorno local sin warnings del navegador.
+|===
+
+=== Terminos adicionales del estado actual
+
+[cols="e,2e" options="header"]
+|===
+|Termino |Definicion
+
+|*GameProvider*
+|Abstraccion de la webapp para ejecutar una partida sin acoplar la pantalla al modo concreto. `BotStrategy` y `MultiplayerStrategy` implementan esta interfaz para que el flujo contra IA y el flujo PvP compartan contrato.
+
+|*Socket.IO Gateway*
+|Capa de tiempo real implementada en `users/socketHandler.js`. Autentica sockets con JWT, guarda conexiones por usuario, gestiona desafios, salas y eventos de sincronizacion, y delega la validacion de movimientos PvP en GameY.
+
+|*PvpSession*
+|Sesion de partida multijugador en GameY. Se guarda en `pvp_sessions` indexada por `match_id` e incluye el tablero `GameY` y la lista de jugadores. Al finalizar, GameY persiste un registro por participante.
+
+|*match_id*
+|Identificador interno de una partida PvP. Lo genera `users` con `nanoid`, se usa para crear la sala Socket.IO y para localizar la sesion PvP correspondiente en GameY.
+
+|*ALLOWED_ORIGINS / ALLOWED_SOCKET_ORIGINS*
+|Variables de entorno que limitan los origenes aceptados por CORS HTTP y por Socket.IO. Por defecto permiten localhost HTTP/HTTPS y Vite en el puerto 5173.
+|===

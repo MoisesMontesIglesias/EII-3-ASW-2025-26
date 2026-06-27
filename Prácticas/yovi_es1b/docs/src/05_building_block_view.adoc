@@ -1,0 +1,473 @@
+ifndef::imagesdir[:imagesdir: ../images]
+
+[[section-building-block-view]]
+== Vista de Bloques de Construcción
+
+=== Caja Blanca del Sistema General
+
+image::5_1-building_block.png[align="center"]
+
+Motivation::
+
+La aplicación YoVi permite jugar al juego de conexión Y online contra distintos bots
+con diferentes niveles de dificultad. Gestiona el registro y autenticación de usuarios,
+guarda el historial de partidas y ofrece una interfaz web accesible desde el navegador.
+El sistema se estructura como una arquitectura de microservicios orquestados con
+Docker Compose, donde cada servicio es propietario de su propia área de datos
+(patrón _Database-per-Service_).
+
+Bloques de Construcción de Contenidos::
+
+[cols="1,2,1" options="header"]
+|===
+|Nombre |Descripción |Puerto
+
+|*Usuario*
+|Usuario de la aplicación que interactúa con ella a través del navegador web.
+|—
+
+|*Webapp*
+|Interfaz gráfica Multi-Page Application (MPA) construida con React 18, Vite 7 y
+TypeScript. Gestiona 5 paginas independientes (index, login, register, gamemode, game). Renderiza
+el tablero triangular en SVG con celdas interactivas, controla el temporizador de turno
+(Easy=60s, Medium=30s, Hard=15s), gestiona el sistema de amigos, el perfil de usuario,
+la tienda de XP con PayPal y la internacionalización en 4 idiomas (es, en, de, pt).
+Servida por Nginx con HTTPS.
+|443
+
+|*Users*
+|Servicio backend en Node.js + Express que actúa como BFF (_Backend For Frontend_)
+y API Gateway. Centraliza autenticación (JWT 24h + bcryptjs), registro, gestión de
+perfil, sistema de amigos por FriendCode (generado con nanoid) y tienda de XP.
+Proxifica todas las llamadas al motor de juego hacia Gamey. Expone métricas Prometheus.
+|3000
+
+|*Gamey*
+|Motor de juego implementado en Rust + Axum. Mantiene el estado de cada partida en
+memoria mediante `DashMap<username, UserSession>`. Implementa la lógica completa del
+Juego Y (Union-Find con máscaras de bits para detección de victoria), coordenadas
+baricentricas (x,y,z), serialización YEN y cinco bots con distintos niveles.
+Persiste historial en MongoDB. Requiere HTTPS (Rustls).
+|4000
+
+|*MongoDB*
+|Base de datos documental accesible únicamente desde la red interna Docker. El Users
+Service gestiona las colecciones `users` y `friendships`. Gamey gestiona la colección
+`partidas` en la base de datos `gamey_db`.
+|27017
+
+|*Prometheus*
+|Recolecta métricas del Users Service cada 5 segundos mediante scraping del endpoint
+`/metrics`, inyectado automáticamente por `express-prom-bundle`.
+|9090
+
+|*Grafana*
+|Visualiza en dashboards las métricas recopiladas por Prometheus. Provisionado
+automáticamente desde ficheros YAML en `monitoring/grafana/provisioning/`.
+|3001
+|===
+
+Important Interfaces::
+
+[cols="1,1,2" options="header"]
+|===
+|Interfaz |Entre |Descripción
+
+|REST `/reset`
+|Webapp → Users
+|Inicia o reinicia una partida con el tamaño de tablero y dificultad seleccionados.
+Devuelve el estado inicial del tablero en formato YEN.
+
+|REST `/move`
+|Webapp → Users
+|Envía el índice de celda elegida por el jugador. El servicio lo reenvía a Gamey,
+que responde con el nuevo estado YEN tras el movimiento del jugador y la respuesta
+del bot. Suma XP atómicamente si el ganador es el humano.
+
+|REST `/surrender`
+|Webapp → Users
+|Registra la rendición del jugador y persiste la derrota en MongoDB vía Gamey.
+
+|REST `/history`
+|Webapp → Users
+|Consulta el historial de partidas paginado con filtros por resultado (Victoria/Derrota).
+
+|REST `/difficulties`
+|Webapp → Users
+|Devuelve la lista de dificultades disponibles (Easy, Medium, Hard).
+
+|REST `/users/profile/:username`
+|Webapp → Users
+|Consulta y actualiza el perfil del usuario: nickname, idioma, avatar e icono.
+
+|REST `/users/follow`
+|Webapp → Users
+|Envía una solicitud de amistad a otro usuario identificado por su FriendCode.
+
+|REST `/friends/requests`
+|Webapp → Users
+|Consulta las solicitudes de amistad pendientes recibidas.
+
+|REST `/friends/respond`
+|Webapp → Users
+|Acepta o rechaza una solicitud de amistad pendiente.
+
+|REST `/execute-move`
+|Users → Gamey
+|Reenvía el índice de celda al motor Rust, que ejecuta el movimiento del jugador,
+calcula la respuesta del bot y devuelve el nuevo estado YEN junto con el ganador si
+lo hay.
+
+|REST `/reset`
+|Users → Gamey
+|Crea o reinicia la `UserSession` del jugador en el `DashMap` de Gamey con el
+tamaño y dificultad indicados. Selecciona el bot activo aleatoriamente entre los
+disponibles para esa dificultad.
+
+|YEN (JSON)
+|Users ↔ Gamey
+|Formato de intercambio del estado del tablero: `{"size":N,"turn":0,"players":["B","R"],"layout":"B/BR/.R."}`.
+Filas separadas por `/`; celdas como `B` (jugador 0), `R` (jugador 1) o `.` (vacía).
+|===
+
+==== Webapp
+
+*Purpose/Responsibility*: Proporcionar la interfaz gráfica del juego al usuario final.
+Gestiona el flujo completo de la partida: selección de dificultad y tamaño de tablero,
+renderizado del tablero triangular YEN, temporizador de turno con movimiento automático
+al agotarse, y visualización del historial de partidas. La Webapp es una MPA de 4
+páginas independientes; Nginx sirve cada fichero HTML directamente sin fallback SPA.
+
+*Interface(s)*: Se comunica exclusivamente con el Users Service mediante `fetch` nativo
+(sin librerías HTTP adicionales). No accede directamente a Gamey ni a MongoDB.
+El JWT se envía en la cabecera `Authorization: Bearer <token>`.
+
+*Quality/Performance Characteristics*: El temporizador de turno opera en cliente con
+`setInterval` de 1 segundo. El cambio de idioma es instantáneo (< 200ms) sin recarga
+de página gracias a `react-i18next`. El modo invitado permite jugar sin registro.
+
+*Directory/File Location*: `webapp/src/`
+
+==== Users
+
+*Purpose/Responsibility*: Gestionar la autenticación y registro de usuarios, el historial
+de partidas, el sistema de amigos y la tienda de XP. Actúa como API Gateway entre la
+webapp y el motor de juego Gamey. Al registrarse, cada usuario recibe un FriendCode
+único de 6 caracteres (generado con `nanoid`, alfabeto sin caracteres ambiguos) que
+permite identificarle para añadirle como amigo.
+
+*Interface(s)*: Expone una API REST en el puerto 3000. Se conecta a MongoDB mediante
+Mongoose para persistencia y a Gamey (puerto 4000) para toda la lógica de juego.
+
+*Quality/Performance Characteristics*: Expone métricas en formato Prometheus mediante
+`express-prom-bundle` (latencia, método HTTP, código de estado). Soporta HTTPS
+condicional: si encuentra certificados en `/certs/` arranca con HTTPS; si no, con HTTP
+(útil para CI sin certificados).
+
+*Directory/File Location*: `users/`
+
+==== Gamey
+
+*Purpose/Responsibility*: Ejecutar toda la lógica del Juego Y: mantener el estado de
+cada partida en memoria, validar movimientos, detectar la condición de victoria
+(conexión de los tres lados del triángulo mediante Union-Find), gestionar el estado
+del tablero en formato YEN y calcular las respuestas de los bots registrados en el servidor. El codigo contiene varios bots, aunque el arranque HTTP actual registra `RandomBot` y `ProBot`.
+Persiste el historial de partidas y estadísticas en MongoDB.
+
+*Interface(s)*: Expone una API REST en el puerto 4000 con HTTPS obligatorio (Rustls).
+Recibe y devuelve el estado del tablero en formato YEN (JSON). Incluye documentación
+OpenAPI generada automáticamente con `utoipa`, accesible en `/swagger-ui`.
+
+*Quality/Performance Characteristics*: Implementado en Rust para máximo rendimiento en
+el cálculo de los bots Hard (AttackerBot y ProBot), que ejecutan BFS sobre todo el
+tablero en cada turno. La topología triangular pre-calcula vecinos y regiones en la
+construcción del tablero, garantizando acceso O(1) durante el juego.
+
+*Directory/File Location*: `gamey/src/`
+
+=== Nivel 2
+
+==== White Box _Webapp_
+
+image::5_2-webapp_blocks.png[align="center"]
+
+La webapp está organizada en páginas MPA, pantallas de presentación, hooks de lógica
+y una capa de servicios. Cada página MPA tiene su propio bundle JavaScript compilado
+por Vite.
+
+[cols="1,2" options="header"]
+|===
+|Componente |Descripción
+
+|`pages/*/main.tsx`
+|Puntos de entrada para cada pagina MPA (index, login, register, gamemode, game). `game/main.tsx`
+coordina `useGameLogic`, `useGameTimer`, sincronización de perfil con el backend,
+sesión de usuario y todos los modales. Implementa el patrón ref-para-callback
+(`handleAutoMoveRef`) para garantizar que `onTimeUp` siempre llama a la versión
+más reciente de `handleAutoMove`.
+
+|`screens/GameScreen`
+|Renderiza el tablero triangular YEN con celdas SVG interactivas. Muestra el
+temporizador con barra de progreso y aplica la clase `turn-timer-urgent` cuando
+quedan ≤ 5 segundos. Gestiona las acciones de reiniciar, rendirse, cambiar
+dificultad/tamaño y consultar historial.
+
+|`screens/ProfileScreen`
+|Permite actualizar nickname (máx. 15 chars), idioma, avatar e icono, y cambiar
+la contraseña. Sincroniza los cambios con el Users Service.
+
+|`screens/FriendsScreen`
+|Panel de amigos. Búsqueda por username (regex) o por `#FRIENDCODE` (exacto).
+Gestión completa de solicitudes: enviar, aceptar, rechazar y cancelar.
+
+|`hooks/useGameLogic`
+|Encapsula la lógica de partida: movimiento humano, movimiento automático por tiempo
+agotado (usando `window.crypto.getRandomValues`, no `Math.random`), reset y rendición.
+
+|`hooks/useGameTimer`
+|Gestiona el temporizador de turno. `startTimer(difficulty)` normaliza la dificultad
+mediante `UI_TO_ENGLISH_DIFFICULTY` y consulta `TURN_TIME_LIMIT`. Cancela el intervalo
+activo antes de crear uno nuevo para evitar duplicados.
+
+|`services/gameService`
+|Único punto de salida para todas las llamadas HTTP con `fetch` nativo. Construye URLs
+con `buildApiUrl` y adjunta el JWT mediante `getAuthHeaders()`. Valida el username
+antes de cada llamada con regex Unicode `/^[\p{L}\p{N} _.-]{1,64}$/u`.
+
+|`i18n.ts`
+|Configuración de `react-i18next`. Lee el idioma desde `localStorage`
+(`yovi_user_language`). Al cargar la partida sincroniza con el idioma del perfil del
+servidor. Traducciones en memoria para los 4 idiomas (es, en, de, pt).
+
+|`constants/config.ts`
+|`API_BASE_URL`, `TURN_TIME_LIMIT`, `UI_TO_ENGLISH_DIFFICULTY`,
+`DIFFICULTY_TRANSLATIONS`, `REVERSE_DIFFICULTY_MAP`.
+
+|`utils/boardUtils`
+|`getBoardDimensionFromSizeChoice` (Pequeño=6, Mediano=9, Grande=12) y
+`patchTriangularLayoutCell` para pintar el movimiento del humano antes de que llegue
+la respuesta de Rust.
+
+|`utils/sessionUtils`
+|JWT en `sessionStorage`, datos de usuario en `localStorage`, modo invitado
+(`isGuestSession`). Todas las funciones normalizan cadenas con NFKC + trim + maxLength.
+|===
+
+==== White Box _Gamey_
+
+image::5_2-gamey_blocks.png[align="center"]
+
+El motor de juego Rust está organizado en los siguientes módulos:
+
+[cols="1,2" options="header"]
+|===
+|Módulo |Descripción
+
+|`core/game.rs`
+|Struct `GameY`: tablero, turno, historial de movimientos (`Vec<Movement>`) y celdas
+disponibles. Implementa conversión bidireccional con YEN (`From<&GameY>` y
+`TryFrom<YEN>`). Delega la física del tablero al `GameEngine`.
+
+|`core/topology/engine.rs`
+|`GameEngine<T>`: motor genérico con Union-Find. Al colocar una ficha crea un nuevo
+conjunto, hace OR de máscaras de región con sus vecinos del mismo jugador y verifica
+victoria comparando contra `winning_mask` (0b111 = los 3 lados). Incluye path
+compression en `find()` para operaciones casi O(1).
+
+|`core/topology/triangular.rs`
+|`TriangularTopology`: pre-calcula en `new()` la lista de adyacencia y las máscaras
+de región para cada celda (SIDE_A: x=0, SIDE_B: y=0, SIDE_C: z=0). Los accesos
+durante el juego son O(1).
+
+|`core/coord.rs`
+|`Coordinates(x,y,z)`: coordenadas baricentricas donde `x+y+z = size-1`.
+`from_index` usa la fórmula de números triangulares para conversión O(1).
+
+|`notation/yen.rs`
+|`YEN`: formato JSON para serializar el estado del tablero. Layout como string
+con filas separadas por `/`. Ejemplo: `"B/BR/.R."`.
+
+|`bot/random.rs`
+|`RandomBot` (Easy): elige una celda vacía del array `available_cells` de forma
+aleatoria con `rand::rng()`.
+
+|`bot/edge_bot.rs`
+|`EdgeBot` (Easy): prefiere celdas de los bordes del triángulo (columna 0,
+columna = fila, fila = N-1). Fallback a aleatorio si el borde está lleno.
+
+|`bot/blocker_bot.rs`
+|`BlockerBot` (Medium): escanea fichas del oponente, calcula qué lados le faltan
+mediante máscaras de bits y prioriza celdas adyacentes que bloqueen esos lados.
+
+|`bot/attacker_bot.rs`
+|`AttackerBot` (Hard): simula primero movimientos ganadores inmediatos (propio y del
+oponente). Luego usa BFS de distancias con potencial `50000 / (d1²+d2²+d3²+1)`.
+
+|`bot/pro_bot.rs`
+|`ProBot` (Hard): similar al AttackerBot pero con potencial `1000 / (d⁴+1)`,
+más peso al oponente (×15 vs ×1 propio), centralidad y bonus de bloqueo.
+
+|`bot/ybot_registry.rs`
+|`YBotRegistry`: `HashMap<String, Arc<dyn YBot>>`. `get_random_bot_by_difficulty`
+filtra por nivel y selecciona un bot al azar entre los disponibles.
+
+|`bot_server/mod.rs`
+|Router Axum con 8 endpoints. `AppState` contiene registry de bots +
+`DashMap<username, Arc<UserSession>>` + `Database` MongoDB.
+
+|`bot_server/state.rs`
+|`UserSession`: `Mutex<GameY>` (tablero), `Mutex<BotDifficulty>` (dificultad actual),
+`Mutex<String>` (bot activo). `get_or_create_session` crea sesión por defecto
+(tablero 5×5, Easy, `random_bot`) si no existe.
+|===
+
+==== White Box _Users_
+
+[cols="1,2" options="header"]
+|===
+|Módulo |Descripción
+
+|`users-service.js`
+|Servicio principal Express (774 líneas, 18 endpoints). Define los endpoints REST,
+gestiona la conexión a MongoDB, hashea contraseñas con bcryptjs y proxifica las
+peticiones de juego a Gamey mediante `fetch` nativo.
+
+|`authMiddleware.js`
+|Middleware de verificación JWT implementado y disponible. El middleware JWT esta aplicado en la mayoria de rutas sensibles, pero es mejorable (deuda técnica DT-01).
+
+|`models/user.js`
+|Modelo Mongoose para usuarios: username (único), password (hash bcrypt), friendCode
+(único, 6 chars, generado con nanoid), birthDate, language, nickname (máx. 15 chars),
+iconName, totalScore (XP acumulados).
+
+|`models/friendship.js`
+|Modelo Mongoose para relaciones de amistad. Campo `users` (array de dos usernames,
+indexado), `status` (pending/accepted), `since`, `last_interaction`.
+
+|`monitoring/prometheus/`
+|`prometheus.yml`: configuración de scraping al Users Service cada 5 segundos.
+
+|`monitoring/grafana/`
+|Provisioning automático de datasource (Prometheus) y dashboards de latencia y
+disponibilidad del Users Service.
+|===
+
+=== Nivel 3
+
+==== White Box _ProBot / AttackerBot (bot/)_
+
+Los dos bots de dificultad Hard comparten la utilidad `bot_utils.rs` y siguen el
+mismo esquema de evaluación en varias fases:
+
+[cols="1,2" options="header"]
+|===
+|Fase |Descripción
+
+|*Detección de victoria inmediata* (solo AttackerBot)
+|Simula cada celda vacía para el jugador propio y para el oponente. Si encuentra un
+movimiento ganador inmediato lo juega (o lo bloquea). Esta fase no existe en ProBot.
+
+|*Cálculo de distancias BFS*
+|`calculate_all_distances` ejecuta BFS desde cada uno de los tres lados del tablero.
+Pasar por una celda propia cuesta 0, por una vacía cuesta 1, por una del oponente
+cuesta `opp_weight` (AttackerBot=100, ProBot=2).
+
+|*Potencial por celda*
+|AttackerBot: `50000 / (d1²+d2²+d3²+1)`. ProBot: suma de `1000/(d⁴+1)` para cada
+lado. Ambas fórmulas hacen que la urgencia crezca al acercarse a los tres lados.
+
+|*Puntuación final (ProBot)*
+|`(potencial_oponente × 15) + (potencial_propio × 1) + centralidad + bonus_bloqueo`.
+El bonus de bloqueo (+1000) se activa si hay ≥ 2 vecinos del oponente en la celda.
+
+|*Puntuación final (AttackerBot)*
+|`(potencial_propio × 10) + (potencial_oponente × threat_level) + centralidad + conectividad`.
+`threat_level` varía (25/12/0.5) según la magnitud del potencial del oponente.
+
+|*Selección*
+|Elige la celda vacía con mayor puntuación total.
+|===
+
+==== White Box _Topología Triangular (core/topology/)_
+
+[cols="1,2" options="header"]
+|===
+|Elemento |Descripción
+
+|`TriangularTopology`
+|Pre-calcula en construcción la lista de adyacencia y las regiones (lados A, B, C)
+de cada celda para acceso O(1) durante el juego. Total de celdas = `N×(N+1)/2`.
+
+|Coordenadas baricentricas
+|Cada celda se identifica por `(x,y,z)` donde `x+y+z = size-1`. Los tres lados del
+triángulo corresponden a x=0 (lado A), y=0 (lado B) y z=0 (lado C) respectivamente.
+Las esquinas del triángulo tocan dos lados simultáneamente.
+
+|`GameEngine` (Union-Find)
+|Motor genérico parametrizado con la topología. Al colocar una ficha: (1) crea un
+conjunto con su máscara de región; (2) hace `union` con vecinos del mismo jugador
+combinando máscaras por OR; (3) comprueba si la máscara resultante es `0b111`
+(victoria). `find()` usa path compression para operaciones casi O(1).
+|===
+
+==== White Box _Temporizador de turno (useGameTimer)_
+
+[cols="1,2" options="header"]
+|===
+|Elemento |Descripción
+
+|`UI_TO_ENGLISH_DIFFICULTY`
+|Mapa de traducción de dificultades de UI (Fácil/Medio/Difícil/Easy/Medium/Hard)
+a claves internas (Easy/Medium/Hard), definido en `constants/config.ts`.
+Cubre también los valores ya en inglés para mayor robustez.
+
+|`TURN_TIME_LIMIT`
+|Constante que define el límite en segundos por dificultad:
+Easy=60s, Medium=30s, Hard=15s.
+
+|`startTimer(difficulty)`
+|Cancela el `setInterval` activo (si existe) antes de crear uno nuevo, evitando
+duplicados. Traduce la dificultad mediante `UI_TO_ENGLISH_DIFFICULTY`. Al llegar a 0
+llama a `onTimeUp()`.
+
+|`stopTimer()`
+|Detiene el intervalo activo. Se invoca al hacer clic en una celda,
+al reiniciar partida, al rendirse, al terminar o al salir.
+
+|`handleAutoMoveRef` (en `game/main.tsx`)
+|Ref que siempre apunta a la versión más reciente de `handleAutoMove`. Resuelve
+el problema del closure de `setInterval`: `onTimeUp` es un callback estable
+(via `useCallback`) que llama a `handleAutoMoveRef.current`, evitando que el
+intervalo capture una versión desactualizada de la función.
+
+|`startNewGame()`
+|Llama a `stopTimer()` y `setTimerVisible(false)` antes de resetear el tablero,
+asegurando que el temporizador se reinicia correctamente al cambiar dificultad,
+tamaño o pulsar reiniciar.
+|===
+
+==== White Box _Modo multijugador_
+
+El modo multijugador actual se apoya en una estrategia separada de la partida contra bot. En la webapp, `BotStrategy` y `MultiplayerStrategy` implementan la misma abstraccion `GameProvider`, de forma que la pantalla de juego puede trabajar con ambos modos sin mezclar toda la logica en el componente visual.
+
+[cols="1,2" options="header"]
+|===
+|Pieza |Funcionamiento
+
+|`gamemode.html` / `pages/gamemode`
+|Pantalla de seleccion de modo. Se construye como una quinta entrada MPA junto a `index`, `login`, `register` y `game`.
+
+|`socketClient.ts`
+|Crea un cliente Socket.IO contra `API_BASE_URL`, enviando el JWT desde `sessionStorage` y usando `withCredentials` para compartir la cookie de sesion.
+
+|`MultiplayerStrategy`
+|Gestiona desafios, aceptacion de partida, sincronizacion de tablero, movimientos por socket y desconexiones. Tambien consulta el perfil publico del rival para mostrar nickname e icono.
+
+|`users/socketHandler.js`
+|Actua como gateway en tiempo real. Autentica cada socket con JWT, mantiene sockets activos por usuario, crea desafios, salas y partidas, y reenvia los movimientos al motor Rust.
+
+|`gamey /pvp/reset` y `/pvp/move`
+|Mantienen partidas PvP en `pvp_sessions: DashMap<match_id, PvpSession>`. Cada partida guarda tablero y jugadores; al terminar se persiste una entrada de historial para cada participante.
+|===
+
+Este diseno deja el tiempo real en `users`, que ya conoce la identidad del usuario, y conserva en `gamey` la unica responsabilidad de validar el tablero y detectar el ganador. Es una extension natural del modo contra bot, pero con estado de partida indexado por `match_id` en lugar de por `username`.

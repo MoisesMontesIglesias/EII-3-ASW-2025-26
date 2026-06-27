@@ -1,0 +1,41 @@
+ifndef::imagesdir[:imagesdir: ../images]
+
+
+[[section-monitoring]]
+== Grafana y Prometheus
+
+Para la monitorización del lado servidor se han utilizado Prometheus y Grafana de forma centralizada. Prometheus actúa como recolector y almacén de métricas de los dos microservicios principales: el módulo de usuarios (**users-service** en Node.js) y el motor de juego (**gamey-service** en Rust). Grafana consume esos datos y los visualiza en dashboards interactivos.
+
+=== Dashboard: Monitorización Global de Microservicios YoVi
+
+image::13-grafana.png[align="center"]
+
+Este dashboard recoge las métricas más relevantes de la arquitectura distribuida. A continuación explicamos cada uno de los paneles detalladamente:
+
+==== Rendimiento HTTP por Método y Status
+Muestra la tasa de peticiones por segundo (req/s) de cada método HTTP junto con su código de respuesta a lo largo del tiempo. Esto permite identificar de un vistazo qué tipo de operaciones generan más tráfico y detectar anomalías en el comportamiento del servicio mediante un gráfico de áreas apiladas (*Stacked Area*).
+
+En la muestra obtenida vemos una clara preponderancia de métodos **POST-201** (creación de recursos) y **OPTIONS-204** (negociación de CORS), lo cual es el comportamiento esperado en una arquitectura donde el frontend React se comunica con APIs protegidas por protocolos de seguridad.
+
+==== Top Endpoints (Peticiones)
+Este panel utiliza una visualización de tipo *Bar Gauge* para desglosar el volumen de tráfico por cada ruta específica del sistema. Permite validar qué funcionalidades son las más demandadas por los usuarios reales.
+
+Se observa que el endpoint `/move` es el más visitado, confirmando que la lógica de juego gestionada por el microservicio en **Rust** es el núcleo de actividad. También se monitorizan correctamente rutas como `/login`, `/history` o `/friends`, permitiendo una trazabilidad completa de la carga entre ambos servicios.
+
+==== Errores 5xx
+Este panel muestra el número de errores de servidor (códigos HTTP 5xx). Su objetivo es detectar fallos críticos o pánicos en el sistema de forma inmediata.
+
+El panel muestra un **0** constante, indicando que los servidores han sido capaces de manejar la carga sin problemas. Está configurado con umbrales visuales para alertar visualmente si se detectase cualquier excepción no controlada en Node o Rust.
+
+==== Latencia P95
+El percentil 95 de latencia nos indica el tiempo de respuesta máximo por debajo del cual se encuentran el 95% de las peticiones. Es la métrica más fiel para medir la fluidez de la experiencia del usuario.
+
+El valor registrado durante las pruebas es de **0.00475 ms**. Este resultado es excepcionalmente bajo y demuestra la eficiencia técnica de haber implementado el motor de juego en **Rust (Axum)**, permitiendo procesar movimientos de juego de forma casi instantánea.
+
+==== Monitorización de Servicios
+Este panel de líneas permite comparar en tiempo real el tráfico que recibe el **gamey-service** frente al **users-service**. 
+
+Sirve para verificar que la arquitectura de microservicios está equilibrada y que ambos contenedores están reportando métricas correctamente bajo el entorno seguro HTTPS configurado.
+
+=== 12.3.2. Conclusiones
+Los datos obtenidos muestran un ecosistema estable, sin errores de servidor y con tiempos de respuesta extremadamente competitivos. La bajísima latencia del servicio de Rust justifica su elección para tareas de computación intensiva, mientras que la monitorización centralizada valida la robustez de la arquitectura global de YoVi.

@@ -1,0 +1,52 @@
+== 8. Conceptos transversales
+
+=== 8.1. Gestión de Proyecto
+
+==== Metodología de desarrollo
+
+El proyecto adopta una metodología ágil basada en **Scrum**.
+Este enfoque iterativo e incremental permite una adaptación continua a los cambios y una entrega de valor constante.
+Se realizan reuniones semanales de seguimiento para revisar el progreso, ajustar la planificación y asegurar la alineación del equipo.
+
+==== Tareas y prioridades
+
+La planificación y el seguimiento de las tareas se centralizan en **GitHub Projects**.
+Las prioridades se revisan cada semana, quedando documentadas en actas de reunión para garantizar la transparencia y el compromiso del equipo.
+
+=== 8.2. Arquitectura y patrones de diseño
+
+==== Arquitectura de Microservicios
+
+La solución se ha diseñado siguiendo una arquitectura de **microservicios**.
+Este patrón estructura la aplicación como un conjunto de servicios pequeños, autónomos y débilmente acoplados.
+
+**Beneficios Clave:**
+
+* **Escalabilidad:** Permite escalar componentes individuales según la demanda.
+* **Mantenibilidad:** Facilita la comprensión, el desarrollo y el despliegue independiente de cada servicio.
+* **Flexibilidad Tecnológica:** Posibilita el uso de diferentes tecnologías o lenguajes para cada servicio si fuera necesario.
+
+=== 8.3. Entorno de Desarrollo y Despliegue
+
+==== Contenerización con Docker
+
+Se utiliza **Docker** y **Docker Compose** para estandarizar los entornos de desarrollo, pruebas y producción.
+Cada microservicio (Webapp, Users, GameY) se empaqueta en su propio contenedor, asegurando que la aplicación se ejecute de manera consistente independientemente de la máquina anfitriona.
+Esto elimina el problema de "funciona en mi máquina" y simplifica la configuración inicial para nuevos desarrolladores.
+
+=== 8.4. Calidad y Automatización
+
+==== Integración Continua y Calidad de Código (CI/CQ)
+
+El proyecto implementa prácticas de Integración Continua (CI) y Calidad de Código (CQ) para mantener un alto estándar de desarrollo:
+
+* **GitHub Actions:** Se utilizan flujos de trabajo automatizados para ejecutar pruebas y verificar la integridad del código en cada *push* o *pull request*.
+* **SonarQube / SonarCloud:** Se integra el análisis estático de código para detectar *bugs*, vulnerabilidades de seguridad y deuda técnica de manera temprana.
+
+==== Estrategias de juego en la webapp
+
+La pantalla de juego no distingue los modos mediante condicionales dispersos, sino mediante estrategias. `BotStrategy` encapsula el flujo clasico contra IA: reset, movimiento, rendicion y temporizador. `MultiplayerStrategy` encapsula sockets, desafios, salas, turnos y sincronizacion del tablero. Ambas implementan `GameProvider`, lo que reduce el acoplamiento de `GameScreen` y facilita extender modos de juego nuevos.
+
+==== Autenticacion HTTP y tiempo real
+
+La autenticacion combina JWT en `sessionStorage` y cookie `token` HTTP-only emitida por `users`. Las peticiones HTTP usan `Authorization: Bearer <token>` y `credentials: include`; los sockets se autentican con el token enviado en `handshake.auth` o con la cookie. Las rutas sensibles de usuarios, amigos, juego e historial usan `authMiddleware`; el login, registro y logout quedan como rutas publicas o de gestion de sesion.

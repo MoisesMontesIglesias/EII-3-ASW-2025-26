@@ -1,0 +1,66 @@
+ifndef::imagesdir[:imagesdir: ../images]
+
+[[section-introduction-and-goals]]
+== Introducción y Objetivos
+
+El proyecto **yovi_es1b** es un sistema distribuido desarrollado en la Universidad de Oviedo para la asignatura de Ingeniería del Software. El objetivo es digitalizar el "Juego Y", un juego de estrategia abstracta, mediante una arquitectura moderna de microservicios.
+
+El equipo de desarrollo está compuesto por:
+* Diego Abeijon Rodriguez, Hugo Tejedor Arcoitza, Nahiara Sanchez Garcia, Eva Menéndez Hernández y Moisés Montes Iglesias.
+
+La solución permite enfrentamientos en tiempo real (Local) y contra una Inteligencia Artificial avanzada, integrando tecnologías heterogéneas (React, Node.js y Rust) para maximizar el rendimiento y la escalabilidad.
+
+=== Visión General de los Requisitos
+
+La aplicación debe garantizar la integridad de las reglas del Juego Y y proporcionar una experiencia fluida.
+
+.Requisitos Funcionales Clave
+* **Arquitectura Multitier:** Separación estricta entre la interfaz (Webapp), la gestión de usuarios (Users Service) y el motor de lógica (GameY Engine).
+* **Gestión de Sesiones:** Autenticación persistente de usuarios mediante JWT (JSON Web Tokens) y almacenamiento en base de datos NoSQL (MongoDB).
+* **Motor de Juego (Kernel):** Integración de un motor lógico desarrollado en Rust para el cálculo de movimientos y validación de estados de victoria.
+* **Modos de juego:** Implementacion de partidas Humano vs Bot y partidas PvP en tiempo real mediante Socket.IO.
+* **Historial de Partidas:** Persistencia de resultados y estadísticas de juego para cada usuario registrado.
+
+=== Objetivos de Calidad
+
+Siguiendo el estándar ISO/IEC 25010, se han definido las siguientes metas:
+
+[options="header",cols="1,2,2"]
+|===
+|Prioridad |Meta de Calidad |Escenario de Medición
+| 1 | **Desplegabilidad** | Un desarrollador nuevo debe poder levantar el ecosistema completo (Frontend, Backend, DB) en menos de 5 minutos usando **Docker Compose**.
+| 2 | **Interoperabilidad** | El sistema debe manejar la comunicación asíncrona entre el Frontend (Vite) y los servicios (Node/Rust) sin bloqueos de interfaz (UX fluida).
+| 3 | **Seguridad** | Las credenciales de usuario deben estar cifradas en reposo (Bcrypt) y las comunicaciones protegidas, evitando la exposición de datos sensibles en el repositorio (uso de Secrets).
+| 4 | **Robustez** | El sistema debe recuperarse automáticamente de caídas en la conexión con la base de datos Atlas mediante reintentos configurados en el driver de Mongoose.
+|===
+
+=== Stakeholders
+
+[options="header",cols="1,2,2"]
+|===
+|Rol |Sujetos |Expectativas
+
+| **Equipo de desarrollo**
+| Diego, Hugo, Nahiara, Eva, Moisés
+| Aplicar buenas prácticas de CI/CD (GitHub Actions) y documentar una arquitectura limpia y mantenible.
+
+| **Usuarios Finales**
+| Jugadores de la comunidad
+| Interfaz intuitiva, respuesta rápida del Bot y seguridad en la gestión de sus perfiles.
+
+| **Cuerpo Docente**
+| Labra Gayo, P. González, I. Cid, D. Martín
+| Cumplimiento de los hitos de entrega, uso correcto de Docker, SonarQube para calidad de código y despliegue funcional en Azure/SSH.
+
+| **Equipo de desarrollo**
+| Diego Abeijon, Hugo Tejedor, Nahiara Sanchez, Eva Menéndez, Moisés Montes
+| Integrar correctamente el sistema, documentar la arquitectura (arc42) y superar la evaluación de la asignatura mediante un despliegue exitoso.
+
+| **Usuarios Finales**
+| Jugadores del Juego Y
+| Una experiencia de juego fluida, poder jugar contra la máquina o un amigo sin que la aplicación se cierre inesperadamente.
+
+| **Evaluadores (Profesores)**
+| Jose Emilio Labra Gayo, Pablo González, Celia Melendi, Diego Martín Fernández
+| Verificar que el despliegue es reproducible, que se respeta la arquitectura propuesta y que la documentación refleja fielmente el sistema construido.
+|===

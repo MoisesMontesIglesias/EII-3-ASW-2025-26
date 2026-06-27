@@ -1,0 +1,187 @@
+ifndef::imagesdir[:imagesdir: ../images]
+
+[[section-deployment-view]]
+
+
+== Vista de despliegue
+
+=== Infraestructura de Nivel 1
+
+En este apartado se describe la infraestructura global de **YOVI**, destacando el uso de contenedores para gestionar la heterogeneidad tecnológica del proyecto (Node.js y Rust)
+y la persistencia de datos.
+
+[plantuml, deployment-diagram, png]
+----
+@startuml
+skinparam actorStyle awesome
+left to right direction
+
+node "<<device>>\nCliente (Navegador)" as pc {
+    artifact "<<artifact>>\nYOVI Frontend (React/TS)" as frontend
+}
+
+node "<<device>>\nServidor Cloud (Docker Host)" as cloud {
+    node "<<device>>\nContenedor Nginx" as nginx {
+        artifact "<<artifact>>\nStatic Files"
+    }
+    node "<<device>>\nContenedor Users" as docker_node {
+        artifact "<<artifact>>\nBackend (Node.js)" as node_app
+    }
+    node "<<device>>\nContenedor Gamey" as docker_rust {
+        artifact "<<artifact>>\nLogic Service (Rust)" as rust_app
+    }
+}
+
+node "<<service>>\nMongoDB Atlas (Cloud Cluster)" as atlas <<cloud>> {
+    database "users_db" as db_users
+    database "gamey_db" as db_games
+}
+
+frontend -- node_app : HTTPS / JSON
+node_app -- rust_app : HTTP / JSON (Interno)
+node_app --> db_users : TLS Connection
+rust_app --> db_games : TLS Connection
+@enduml
+----
+
+Motivación::
+
+La infraestructura se basa en la contenerización con Docker para resolver la necesidad de ejecutar dos entornos distintos (Node.js y Rust). El despliegue en la nube garantiza que la aplicación sea accesible publicamente, cumpliendo con el requisito de disponibilidad para usuarios y bots externos.
+Así, una parte se encarga de la web y los usuarios (Node.js) y otra exclusivamente de las reglas del juego (Rust).
+
+Características de Calidad y Rendimiento::
+
+* **Rapidez:** Al tener la lógica del juego en Rust, las jugadas se calculan de manera casi inmediata.
+* **Fiabilidad:** Como se usan contenedores, el sistema funcionará igual de bien en los ordenadores donde se desarrolla que en los del servidor final.
+* **Seguridad:** Los datos viajan protegidos por internet para mantener las partidas privadas.
+
+Mapeo de piezas a la infraestructura::
+
+[options="header",cols="1,2"]
+|===
+| ¿Qué se ha programado? | ¿Dónde se ejecuta?
+| **La interfaz Web** | En el ordenador o móvil donde la persona juega.
+| **La API y gestión de usuarios** | En el contenedor principal del servidor.
+| **Las reglas y estrategias del juego** | En el contenedor principal de Rust.
+| **El historial de partidas** | En el servidor de base de datos.
+|===
+
+
+=== Infraestructura de Nivel 2
+
+==== Servidor en la Nube (Docker Host)
+
+Es el servidor principal donde ocurre todo lo relativo al backend.
+
+[plantuml, level2-server, png]
+----
+@startuml
+node "Servidor Cloud (Docker Host)" {
+    node "Red Interna (monitor-net)" {
+        component "Nginx (Proxy)" as nginx
+        component "Users Service (Node.js)" as node
+        component "Gamey Engine (Rust)" as rust
+    }
+}
+
+cloud "MongoDB Atlas" as atlas
+
+nginx -down-> node : Proxy Pass
+node -right-> rust : REST API (Internal)
+node -down-> atlas : TLS (Users Auth & Social)
+rust -down-> atlas : TLS (Games History)
+@enduml
+----
+
+**Explicación:**
+En este nivel de detalle se observa que el servidor de Node.js funciona como un punto de control. Cuando el usuario solicita su historial, Node no accede a los datos de las partidas directamente; en su lugar, realiza una petición interna al servicio de Rust. Es Rust quien tiene la responsabilidad única de comunicarse con la colección partidas de MongoDB para registrar o recuperar los resultados de los juegos. Esta separación garantiza que la lógica del juego y la gestión de usuarios no interfieran entre sí.
+
+==== Cliente
+
+Es el dispositivo (PC o móvil) de la persona que utiliza la aplicación.
+
+[plantuml, level2-client, png]
+----
+@startuml
+skinparam componentStyle rectangle
+
+node "Dispositivo del Usuario" {
+node "Navegador Web" {
+artifact "React Application" as react_app
+
+    database "Estado Local" as state {
+        [Variable: username] as user_val
+    }
+    
+    component "API Fetch / Axios" as network
+}
+}
+
+node "Infraestructura Cloud" {
+component "Backend (Node.js)" as node_backend
+}
+
+react_app -down-> user_val : 1. Gestiona\nidentidad
+user_val -right-> network : 2. Inyecta\nparámetro
+network -right-> node_backend : 3. GET /history?username=...
+@enduml
+----
+
+**Explicación:**
+Al acceder a la web, el navegador descarga la aplicación de React, que se ejecuta íntegramente en el dispositivo del usuario. El sistema utiliza el Estado Local (memoria RAM) para mantener identificada la sesión. Así, cuando el jugador solicita su historial, el código rescata el nombre guardado y construye una petición dinámica hacia el backend de Node.js. Esto permite que el juego sea fluido y que el servidor reciba siempre el contexto necesario para filtrar los datos de la base de datos correctamente.
+
+
+==== Base de Datos (Persistencia)
+
+Es el lugar donde se almacena la información. De esta manera no se perderá la información al reiniciar los contenedores.
+
+[plantuml, level2-db, png]
+----
+@startuml
+node "MongoDB Atlas (SaaS)" <<Managed Service>> {
+    database "Cluster0" {
+        database "users_db" {
+            [Colección: users]
+            [Colección: friendships]
+        }
+        database "gamey_db" {
+            [Colección: partidas]
+        }
+    }
+}
+@enduml
+----
+
+**Explicación:**
+Se utiliza el servicio gestionado MongoDB Atlas, organizando la información en dos bases de datos independientes (users_db y gamey_db) para cumplir con el patrón Database-per-Service. Al ser un servicio SaaS (Software as a Service), la persistencia, las copias de seguridad y la seguridad de los datos están delegadas al proveedor cloud, eliminando la dependencia de volúmenes locales en nuestro servidor y garantizando que los datos no se pierdan al reiniciar o eliminar los contenedores de Docker.
+
+=== Detalles actuales de despliegue local
+
+El `docker-compose.yml` actual levanta cinco servicios principales en la red `monitor-net`: `webapp`, `users`, `gamey`, `prometheus` y `grafana`. La base de datos no se crea como contenedor propio en este compose; los servicios reciben sus URI mediante variables de entorno (`MONGODB_URI_USERS` y `MONGODB_URI_GAMEY`), lo que permite usar MongoDB externo o Atlas sin cambiar codigo.
+
+[cols="1,2,2" options="header"]
+|===
+|Servicio |Puerto externo |Notas
+
+|`webapp`
+|80 y 443
+|Nginx sirve la MPA y proxifica `/socket.io`, `/login`, `/createuser`, `/move`, `/history`, `/reset`, `/surrender`, `/friends` y `/users` hacia `users`.
+
+|`users`
+|3000
+|Arranca en HTTPS si encuentra `/certs/key.pem` y `/certs/cert.pem`; si no, cae a HTTP. Tambien crea el gateway Socket.IO.
+
+|`gamey`
+|4000 externo -> 3000 interno
+|El binario se ejecuta con `--mode server --port 3000`. Dentro de Docker, `users` lo llama como `https://gamey:3000`; desde el host queda expuesto como `https://localhost:4000`.
+
+|`prometheus`
+|9090
+|Lee la configuracion desde `users/monitoring/prometheus` y recoge metricas del Users Service.
+
+|`grafana`
+|9091 externo -> 3000 interno
+|Provisiona datasource y dashboards desde `users/monitoring/grafana/provisioning`.
+|===
+
+Los certificados locales se montan desde `./certs` tanto en Nginx como en `users` y `gamey`. En desarrollo con Vite, `webapp/vite.config.ts` tambien intenta usar esos certificados si existen.
