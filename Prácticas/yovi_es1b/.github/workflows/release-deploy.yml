@@ -1,0 +1,242 @@
+name: Release — Test, Build, Publish, Deploy
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_TAG: ${{ github.event.release.tag_name }}
+
+jobs:
+  test-node:
+    name: Run node unit tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [webapp, users]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: |
+          cd ${{ matrix.service }}
+          npm ci
+
+      - name: Run tests
+        run: |
+          cd ${{ matrix.service }}
+          npm test
+
+  test-rust:
+    name: Run rust (gamey) tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run tests
+        run: |
+          cd gamey
+          cargo test
+
+  e2e:
+    name: Run E2E tests
+    runs-on: ubuntu-latest
+    needs: [test-node, test-rust]
+    continue-on-error: true
+    env:
+      # NUEVO
+      MONGODB_URI_USERS: mongodb://localhost:27017/users_test
+      MONGODB_URI_GAMEY: mongodb://localhost:27017/gamey_test
+      NODE_TLS_REJECT_UNAUTHORIZED: 0
+    # nuevo
+    services:
+      mongodb:
+        image: mongo:latest
+        ports:
+          - 27017:27017
+    #
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # --- GENERAR CERTIFICADOS (Con tus nombres: key.pem y cert.pem) ---
+      - name: Create SSL Certificates
+        run: |
+          mkdir -p certs
+          openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+            -keyout certs/key.pem -out certs/cert.pem \
+            -subj "/C=ES/ST=Asturias/L=Oviedo/O=Uniovi/OU=ASW/CN=localhost"
+
+          # Copiamos a la carpeta de users
+          cp certs/key.pem users/key.pem
+          cp certs/cert.pem users/cert.pem
+
+          # Copiamos a la carpeta de webapp
+          cp certs/key.pem webapp/key.pem
+          cp certs/cert.pem webapp/cert.pem
+      - name: Install users dependencies
+        run: |
+          cd users
+          npm ci
+      - name: Install webapp dependencies
+        run: |
+          cd webapp
+          npm ci
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Start Rust Server (Gamey)
+        run: |
+          cd gamey
+          # Arrancamos Rust en el puerto 4000 y lo mandamos al fondo con &
+          cargo run -- --mode server --port 4000 &
+          echo "Esperando a que Rust compile y despierte..."
+          sleep 60
+        env:
+          MONGODB_URI: ${{ env.MONGODB_URI_GAMEY }}
+          GAMEY_TLS_CERT_PATH: ../users/cert.pem
+          GAMEY_TLS_KEY_PATH: ../users/key.pem
+      - name: Install Playwright browsers
+        run: |
+          cd webapp
+          npm run test:e2e:install-browsers
+      - name: Run E2E tests (start servers and run cucumber)
+        run: |
+          cd webapp
+          VITE_API_URL=https://localhost:3000 \
+          GAMEY_SERVICE_URL=https://localhost:4000 \
+          npm run test:e2e
+
+  docker-push-users:
+    name: Publish users image
+    runs-on: ubuntu-latest
+    needs: e2e
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Publish to Registry (users)
+        uses: elgohr/Publish-Docker-Github-Action@v5
+        with:
+          name: ${{ github.repository_owner }}/${{ github.event.repository.name }}-users
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          registry: ghcr.io
+          workdir: users
+
+  docker-push-webapp:
+    name: Publish webapp image
+    runs-on: ubuntu-latest
+    needs: e2e
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Publish to Registry (webapp)
+        uses: elgohr/Publish-Docker-Github-Action@v5
+        with:
+          name: ${{ github.repository_owner }}/${{ github.event.repository.name }}-webapp
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          registry: ghcr.io
+          workdir: webapp
+          buildargs: |
+            VITE_API_URL=https://${{ secrets.DEPLOY_HOST }}:3000
+            VITE_GAMEY_URL=https://${{ secrets.DEPLOY_HOST }}:4000
+
+  docker-push-gamey:
+    name: Publish gamey image
+    runs-on: ubuntu-latest
+    needs: e2e
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Create SSL Certificates for Docker
+        run: |
+          mkdir -p gamey/certs
+          openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+            -keyout gamey/certs/key.pem -out gamey/certs/cert.pem \
+            -subj "/C=ES/ST=Asturias/L=Oviedo/O=Uniovi/OU=ASW/CN=localhost"
+
+      - name: Prepare gamey image name
+        id: gamey_image
+        run: |
+          OWNER="${GITHUB_REPOSITORY_OWNER,,}"
+          REPO="${GITHUB_REPOSITORY#*/}"
+          echo "name=ghcr.io/${OWNER}/${REPO}-gamey" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to Registry (gamey)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./gamey
+          file: ./gamey/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.gamey_image.outputs.name }}:latest
+            ${{ steps.gamey_image.outputs.name }}:${{ env.IMAGE_TAG }}
+
+  deploy:
+    name: Deploy over SSH
+    runs-on: ubuntu-latest
+    needs: [docker-push-users, docker-push-webapp, docker-push-gamey]
+    steps:
+      - name: Deploy over SSH
+        uses: fifsky/ssh-action@master
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          user: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_KEY }}
+          command: |
+            set -e
+
+            wget https://raw.githubusercontent.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/master/docker-compose.deploy.yml -O docker-compose.yml
+
+            echo "MONGODB_URI_USERS=${{ secrets.MONGODB_URI_USERS }}" > .env
+            echo "MONGODB_URI_GAMEY=${{ secrets.MONGODB_URI_GAMEY }}" >> .env
+            echo "ALLOWED_ORIGINS=https://${{ secrets.DEPLOY_HOST }},http://${{ secrets.DEPLOY_HOST }},https://localhost,http://localhost" >> .env
+
+            docker rm -f gamey users webapp prometheus grafana 2>/dev/null || true
+            sudo rm -rf certs
+            mkdir -p certs
+            openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+              -keyout certs/key.pem -out certs/cert.pem \
+              -subj "/C=ES/ST=Asturias/L=Oviedo/O=Uniovi/OU=ASW/CN=${{ secrets.DEPLOY_HOST }}"
+            chmod 600 certs/key.pem
+            chmod 644 certs/cert.pem
+
+            docker compose down
+            docker compose pull
+            docker compose up -d --no-build && echo "Despliegue finalizado con éxito" && exit 0
